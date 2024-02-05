@@ -1,0 +1,290 @@
+---
+title: "Final project"
+author: "Nhan Nguyen"
+date: "2023-11-08"
+output: html_document
+---
+#Project title: Hotel customers 
+
+# Articles that I will use for references: 
+
+ 1. Using data mining techniques for profiling profitable hotel customers: An application of RFM analysis (Aslıhan Dursun, 2016)
+https://www.sciencedirect.com/science/article/pii/S2211973616300149?casa_token=_RSj3E_LRWgAAAAA:V528dy98yRb6jv57rvHsnXq7pzj5hlbThbhVAnIT1Lc12_t158Ts6nrrwv29tvgf-p9bXj4ZQg
+2. Cosmetics Customer Segmentation and Profile in Indonesia Using Clustering and Classification Algorithm (Hartini Sari, 2020)
+https://www.proquest.com/docview/2571034556?pq-origsite=primo&parentSessionId=vBdR2gcy7PiLu%2Bid9eQffAwKyetncxKb6w8jXDm4OHc%3D
+
+These paper using clustering method and appling RFM analysis in order to buiding customers segmentation which I will apply for my hotel customers research. 
+
+## Research objective
+
+#1.Customer segmentation: Using clustering model to profiling hotel customers by segmentation
+
+#2. Predictive model: Using regression model to predict target variable : the revenue of hotel based on indepedent variables of dataset. 
+
+```{r}
+#1. Data Exploring and Cleaning
+
+#load the dataset
+library(readxl)
+hotel_cus = read_excel("HotelCustomers.xlsx")
+head(hotel_cus)
+# structure of dataset
+str(hotel_cus)
+hotel.clean = hotel_cus
+#convert character column into factor
+hotel.clean[c("Nationality","Age", "LodgingRevenue", "OtherRevenue", "DistributionChannel","MarketSegment")] <- lapply(hotel.clean[c("Nationality","Age", "LodgingRevenue", "OtherRevenue", "DistributionChannel","MarketSegment")], as.factor)
+str(hotel.clean)
+#check missing values 
+colSums(is.na(hotel.clean))
+
+# Replace "NULL" value in age column as "NA"
+hotel.clean$Age[hotel.clean$Age == "NULL"] <- NA
+# Replace missing value in age column with mode method
+our_table = table(hotel.clean$Age)
+pos_mode = which.max(our_table)
+our_mode = names(our_table)[pos_mode]
+hotel.clean$Age[is.na(hotel.clean$Age)] <- our_mode
+
+
+## Drop "NameHash" and "DocIDHash" column out of dataset
+columns_to_drop <- c("NameHash", "DocIDHash")
+# Remove the specified columns using the drop function
+hotel.clean <- hotel.clean[, !names(hotel.clean) %in% columns_to_drop]
+# Combine two variables "LodgingRevenue" and "OtherRevenue" into a new column "Total Revenue"
+hotel.clean$LodgingRevenue <- as.numeric(as.character(hotel.clean$LodgingRevenue))
+hotel.clean$OtherRevenue <- as.numeric(as.character(hotel.clean$OtherRevenue))
+hotel.clean$TotalRevenue <- hotel.clean$LodgingRevenue + hotel.clean$OtherRevenue
+# Drop two columns"LodgingRevenue" and "OtherRevenue" out of dataset
+hotel.clean <- hotel.clean[, !(names(hotel.clean) %in% c("LodgingRevenue", "OtherRevenue"))]
+
+# drop all the rows where "DaysSinceLastStay" = -1 which indicates that customers never stayed at the hotel
+# Assuming your data frame is named 'your_data'
+hotel.clean <- subset(hotel.clean, DaysSinceLastStay != -1)
+
+
+summary(hotel.clean)
+
+
+```
+
+
+```{r}
+## Visualization
+
+hotel.clean$Age <- as.numeric(as.character(hotel.clean$Age))
+
+# Create a boxplot for the "Age" variable with data no outliers
+boxplot(hotel.clean$Age, 
+        main = "Boxplot of Age with outliers",
+        ylab = "Age",
+        col = "lightblue",
+        border = "black")
+
+#Normalization of variable "Age"
+Q1 <- quantile(hotel.clean$Age, 0.25)
+Q3 <- quantile(hotel.clean$Age, 0.75)
+IQR <- Q3 - Q1
+outliers <- (hotel.clean$Age < (Q1 - 1.5 * IQR)) | (hotel.clean$Age > (Q3 + 1.5 * IQR))
+hotel.clean1 <- hotel.clean[!outliers, ]
+
+boxplot(hotel.clean1$Age, 
+        main = "Boxplot of Age with no outliers",
+        ylab = "Age",
+        col = "lightblue",
+        border = "black")
+
+# Create a histogram for the "AverageLeadTime" variable
+hist(hotel.clean$AverageLeadTime, 
+     main = "Histogram of AverageLeadTime",
+     xlab = "AverageLeadTime",
+     ylab = "Frequency",
+     col = "lightblue",
+     border = "black",
+     breaks = 20)
+
+# Bar plot for DistributionChannel 
+library(ggplot2)
+ggplot(hotel.clean, aes(x = DistributionChannel, fill = DistributionChannel)) +
+  geom_bar() +
+  ggtitle("Distribution Channel") +
+  xlab("Distribution Channel") +
+  ylab("Frequency") +
+  theme_minimal()
+
+# Bar plot for MarketSegment 
+ggplot(hotel.clean, aes(x = DistributionChannel, fill = DistributionChannel)) +
+  geom_bar() +
+  ggtitle("Distribution Channel") +
+  xlab("Distribution Channel") +
+  ylab("Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(hotel.clean, aes(x = BookingsCheckedIn, y = TotalRevenue)) +
+  geom_point(alpha = 0.7, color = "blue") +
+  labs(title = "Scatter Plot of Bookings Checked In vs. Total Revenue",
+       x = "Bookings Checked In",
+       y = "Total Revenue")
+
+
+```
+```{r}
+# data partition for 70% for training dataset and 30% for testing dataset
+set.seed(123)
+hotel.index = sample(c(1:dim(hotel.clean)[1]), dim(hotel.clean)[1]*0.7)
+hotel.train = hotel.clean[hotel.index, ]
+hotel.test = hotel.clean[-hotel.index, ]
+```
+
+
+## RFM Analyis
+
+1. In this research, I will apply RFM analysis in order to segment customers based on their past purchase behavior. The analysis will be scored by three factors: Recency(R) - Time since last purchase, Frequency(F) - Total number of purchases and Monetary (M) - Total monetary value. Applying in this dataset, Recency will be counted by the number of days since a customer last stay, Frequency will represent for number of bookings that customer check-in in the hotel and monetary will be the total revenue that a customer spend for goods and services in the hotel. The RFM analysis is the helpful tool that help business can improve customer segmentation by dividing customers into different groups for better identifying which customers group will be potential. From that, business can have better marketing stategies for target customers. 
+
+```{r}
+
+# Create Recency, Frequency, and Monetary scores
+recency_breaks <- cut(hotel.clean$DaysSinceLastStay, breaks = 5, labels = FALSE, right = FALSE)
+hotel.clean$Recency_Score <- 5 - recency_breaks + 1  # Reverse the order
+hotel.clean$Frequency_Score <- as.integer(cut(hotel.clean$BookingsCheckedIn, breaks = 5, labels = FALSE))
+hotel.clean$Monetary_Score <- as.integer(cut(hotel.clean$TotalRevenue, breaks = 5, labels = FALSE))
+
+# Create RFM Segment
+hotel.clean$RFM_Segment <- paste0(hotel.clean$Recency_Score, hotel.clean$Frequency_Score, hotel.clean$Monetary_Score)
+
+# Create RFM result table
+rfm_result <- aggregate(cbind(DaysSinceLastStay, BookingsCheckedIn, TotalRevenue) ~ RFM_Segment, data = hotel.clean, FUN = mean)
+rfm_result$Count <- tapply(hotel.clean$DaysSinceLastStay, hotel.clean$RFM_Segment, length)
+
+# Rename columns
+colnames(rfm_result) <- c("RFM_Segment", "Recency", "Frequency", "Monetary", "Count")
+
+# Print the RFM result table
+print(rfm_result)
+
+
+```
+```{r}
+scatter_plot <- ggplot(rfm_result, aes(x = Frequency, y = Monetary)) +
+  geom_point(color = "steelblue", alpha = 0.7) +
+  labs(title = "Scatter Plot: Frequency vs. Monetary", x = "Frequency", y = "Monetary")
+
+```
+
+
+The RFM model was introduced by Bult and Wansbeek (1995) which proved the effectiveness in marketing databases. The concept of RFM was explained by the measurement of Rencency(R), Frequency(F) and Monetary(M). The segmentation process initiates by focusing on recency, evaluating the time since the last purchase. Customers are sorted from the most recent to the least recent, and then divided into quintiles. The top 20% receive a recency score of 5, the next 20% a score of 4, and so forth. This same approach is then applied to frequency, with customers ranked from most to least frequent. The top 20% in terms of frequency are assigned a score of 5, and the remaining quintiles receive scores of 4, 3, 2, and 1. The process is repeated for monetary value. Subsequently, all customers are ranked by concatenating their recency, frequency, and monetary values. Based on the quintile system, the segmentation will be assigned by 125 scores (5x5x5), from the highest as segment 555 to the lowest 111. Each segmentation will be explained by each score of R-F-M, for example, the segment 555 which would be a group customer with the most recently purchase, most frequently, and spend the most amount of money on goods and services. 
+
+Reference: Bult, J. R., & Wansbeek, T. (1995). Optimal selection for direct mail. Marketing Science, 14(4), 378–394. https://doi.org/10.1287/mksc.14.4.378
+
+```{r}
+# Visualize the RFM distribution
+library(ggplot2)
+
+rfm_result$RFM_Segment <- as.character(rfm_result$RFM_Segment)
+
+# Create a bar chart
+ggplot(rfm_result, aes(x = RFM_Segment, y = Count, fill = RFM_Segment)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Distribution of RFM Segments", x = "RFM Segment", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+The RFM result table and distribution chart reveals distinct customer segments, with Segment 311 standing out as the largest group, encompassing 15,154 customers. This segment is characterized by the medium recent stays, lowest frequent visits, and lowest monetary spending. Following closely is Segment 511, comprising customers who have most recent stays, the lowest visits, and lowest amount of money spent. Meanwhile, Segment 111, with 10,231 customers, represents the group with the lowest RFM scores, indicating lowest recent stays, infrequent visits, and low monetary value. Notably, other segments such as 531 and 551 exhibit negligible customer numbers. Overall, these findings provide valuable insights into customer behavior, allowing for targeted strategies to engage and retain customers across different segments.
+
+
+```{r}
+#create a dataframe to classify each customer into different segmentation
+Customers_segment_data <- c("ID", "Age","AverageLeadTime", "DaysSinceLastStay", "BookingsCheckedIn", "TotalRevenue", "Recency_Score","Frequency_Score", "Monetary_Score" , "RFM_Segment")
+cus_seg_table <- hotel.clean[Customers_segment_data]
+print(cus_seg_table)
+```
+
+The table give us the information of customer and its RFM score based on number of days since last stay at the hotel, number of bookings, and total revenue. For example, the first customer has 151 days since their last stay, and has 3 bookings at hotel and spent $476 for goods and services. Based on RFM model, this customer is classified as segment 511 with the most recent stay(5), and lowest frequent visit(1) and lowest monetary spending(1).
+
+## Clustering method
+After creating RFM scores and segmenting each customer based on RFM scores, the next step is performing cluster analysis. Clustering help identify the similar groups based on RFM characteristics. 
+```{r}
+# Standardize the RFM variables to make sures these variables on the same scale
+standardized_rfm <- scale(rfm_result[, c("Recency", "Frequency", "Monetary")])
+```
+
+## K-means with elbow method
+```{r}
+wss <- numeric(10)  # within-cluster sum of squares
+
+# Try different values of k ( from 1 to 10)
+for (i in 1:10) {
+  kmeans_model <- kmeans(standardized_rfm, centers = i, nstart = 25)
+  wss[i] <- sum(kmeans_model$withinss)
+}
+
+# Plot the elbow graph
+plot(1:10, wss, type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of Clusters (k)", ylab = "Total Within Sum of Squares",
+     main = "Elbow Plot")
+
+library(factoextra)
+elbow_plot <- fviz_nbclust(standardized_rfm, FUNcluster = kmeans, method = "wss") + geom_vline(xintercept = 4, lty = 2)
+elbow_plot
+```
+
+From the elbow graph above, it suggests that the optimal number of cluster = 4, so I will apply 4 clusters for further analysis.
+```{r}
+#compute l-means clustering with 4 clusters
+set.seed(123)
+km_best <- kmeans(standardized_rfm, 4, nstart = 100)
+rfm_result$km_cluster <- as.factor(km_best$cluster)
+rfm_result
+
+```
+
+```{r}
+#visualize the RFM in 3D scatter plot
+library(plotly)
+plotly::plot_ly(rfm_result, x = ~ Recency, y = ~ Monetary, z = ~ Frequency, color = ~km_cluster)
+```
+It can be seen from the plot above, cluster 1 and 4 have high Recency and cluster 1 have highest the monetary value. While cluster 2, 3 have low Recency, and cluster 3 have highest frequency value.
+
+```{r}
+
+library(dplyr)
+
+result_summary <- rfm_result %>%
+  select(-Count) %>%
+  mutate(
+    Customer_Segment = case_when(
+      km_cluster == "1" ~ "Can't Lose Them",
+      km_cluster == "2" ~ "Potential Customers",
+      km_cluster == "3" ~ "Loyal Customers",
+      km_cluster == "4" ~ "At Risk/Lost",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  group_by(km_cluster, Customer_Segment) %>%
+  summarize_if(is.numeric, mean)
+
+# Print the result
+print(result_summary)
+```
+
+From the table result above, the cluster 1 indicates the highest Recency value , which means that the last time of this group customer stayed in the hotel average 777 days ago, not recently. And this group moderate Frequency, with average 29 number of check-in bookings. Remarkably, this group generates the highest total revenue for the hotel. Based on these buying behavior characteristics, this group customer can be classified as can't lose them segment.
+* Cluster 2: this group customer shares the similarity in terms of lowest recency, which means that the time they stayed at the hotel recently, low frequent visit average 9 numbers of bookings and low total revenue generated. These customers can be segmented as potential group of customers.  
+*Cluster 3: this group customer recently active with low recency value, and highest frequent visit with average 54 bookings, and moderate value of revenue. These customers could be considered as loyal customers group.
+*Cluster 4: this group customer with high Recency which indicates the last time they stayed at the hotel was really long time ago, and lowest frequent visit and low monetary spending, average $4000. This group is at risk/ lost customers, further actions needed to revive their interest. 
+
+
+## Marketing Strategies Recommendation
+
+Through the purchasing behavior pattern of customers thorugh RFM analysis, we can accurately tailor marketing strategies to each targeted group customers.
+
+Group customer 1 with moderate frequent visit brings the highest revenue for the hotel, however, they have not returned for long time. So, the hotel should give them promotion, discount program to encourage them to return. Moreover, tailoring their preferences and past booking history to enhance their loyalty.
+
+Group customer 2 recently visited to the hotel, however low frequent visit and lowest spending. So, the hotel should introduce attractive packages with promotion to encourage them return and enhance their spending. Besides that, we should collect feedback from them, so we can understand their needs and preferences, so we can adjust accordingly.
+
+Group customer 3 recently active, with highest frequent visit to the hotel and moderate spending. So, this group with loyal customers should be treated like VIP by introducing exclusive services, give them rewards through loyalty program. 
+
+Group customer 4 is the most inactive group with lowest frequent visit and low monetary spending. So, the hotel should understand their disengagement through the survey, feedback. Besides, the promotion or exclusive incentives for this group should be introduced to encourage their return. 
+
